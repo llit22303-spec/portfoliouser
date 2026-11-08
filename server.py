@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from typing import Optional
 import uvicorn
 from fastapi import FastAPI, HTTPException, Response
@@ -8,6 +9,29 @@ from database import DatabaseManager
 
 app = FastAPI(title="Rehman Ali Portfolio - Public API (User Side)")
 db = DatabaseManager()
+
+
+@contextmanager
+def get_db_cursor():
+    cursor_context = getattr(db, "get_cursor", None)
+    if callable(cursor_context):
+        with cursor_context() as connection:
+            yield connection
+        return
+
+    connect = getattr(db, "getConnection", None)
+    close = getattr(db, "closeConnection", None)
+    if not callable(connect) or not callable(close):
+        raise RuntimeError("DatabaseManager does not provide a supported connection interface.")
+
+    conn, cursor = connect()
+    if conn is None or cursor is None:
+        raise RuntimeError("Could not establish database connection.")
+    try:
+        yield conn, cursor
+    finally:
+        close(conn, cursor)
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -62,7 +86,7 @@ def normalize_project(p: dict) -> dict:
 
 def get_all_projects():
     try:
-        with db.get_cursor() as (conn, cursor):
+        with get_db_cursor() as (conn, cursor):
             cursor.execute(
                 """
                 SELECT p.*, first_image.image_url AS first_image_url
@@ -91,7 +115,7 @@ def get_all_projects():
 
 def get_single_project_details(project_id: int):
     try:
-        with db.get_cursor() as (conn, cursor):
+        with get_db_cursor() as (conn, cursor):
             cursor.execute(
                 "SELECT * FROM images WHERE project_id = %s ORDER BY id ASC",
                 (project_id,),
@@ -104,7 +128,7 @@ def get_single_project_details(project_id: int):
 
 def fetch_basic_details():
     try:
-        with db.get_cursor() as (conn, cursor):
+        with get_db_cursor() as (conn, cursor):
             cursor.execute("SELECT * FROM roles ORDER BY id ASC")
             roles = cursor.fetchall()
 
@@ -199,7 +223,7 @@ def project_detail_get(project_id: int, response: Response):
 @app.post("/api/v3/contact")
 def submit_contact(msg: ContactMessageIn):
     try:
-        with db.get_cursor() as (conn, cursor):
+        with get_db_cursor() as (conn, cursor):
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS contact_messages (
